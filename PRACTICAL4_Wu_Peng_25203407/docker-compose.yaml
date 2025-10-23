@@ -1,0 +1,114 @@
+services:
+  # ========================================
+  # Database Service (PostgreSQL)
+  # ========================================
+  database:
+    image: postgres:latest
+    container_name: database
+    environment:
+      # Read environment variables from .env file
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Persist database data to a named volume
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      # Connect only to the backend network
+      - backend
+    healthcheck:
+      # Health check to ensure the database is fully started
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ========================================
+  # Adminer Service (Database Management UI)
+  # ========================================
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    ports:
+      # Map to host port 8091
+      - "8091:8080"
+    networks:
+      # Connect only to the backend network
+      - backend
+    depends_on:
+      # Wait until the database service is healthy before starting
+      database:
+        condition: service_healthy
+
+  # ========================================
+  # API Service (FastAPI)
+  # ========================================
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: api
+    environment:
+      # Database connection string
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Mount code directory for hot reloading (no need to restart container after code changes)
+      - ./api:/app
+    networks:
+      # Connect to both backend (access the database) and frontend (accessed by web-app)
+      - backend
+      - frontend
+    depends_on:
+      # Wait until the database service is healthy before starting
+      database:
+        condition: service_healthy
+    # Expose internal port (not mapped to host)
+    expose:
+      - "8080"
+
+  # ========================================
+  # Web-App Service (Flask)
+  # ========================================
+  web-app:
+    build:
+      context: ./web-app
+      dockerfile: Dockerfile
+    container_name: web-app
+    ports:
+      # Map to host port 8090
+      - "8090:5000"
+    volumes:
+      # Mount code directory for hot reloading (no need to restart container after code changes)
+      - ./web-app:/app
+    networks:
+      # Connect only to the frontend network
+      - frontend
+    depends_on:
+      # Wait for database and API to start before running
+      - database
+      - api
+    environment:
+      # API service address (use container name)
+      API_URL: http://api:8080
+
+# ========================================
+# Networks Definition
+# ========================================
+networks:
+  backend:
+    driver: bridge
+    # backend network: database, adminer, api
+  frontend:
+    driver: bridge
+    # frontend network: web-app, api
+
+# ========================================
+# Volumes Definition
+# ========================================
+volumes:
+  postgres_data:
+    driver: local
+    # Persistent storage for PostgreSQL data
